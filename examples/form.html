@@ -1,0 +1,33 @@
+<form method="post" action="/zayavka/submit.php" data-zayavka data-fallback="Позвоните нам: +7 000 000-00-00.">
+  <input type="hidden" name="form" value="callback">
+  <input type="hidden" name="consent_version" value="2026-12-01">
+  <input type="hidden" name="id">
+  <input type="hidden" name="page">
+  <div hidden style="display:none" aria-hidden="true"><label>Не заполняйте <input name="zk_hp" tabindex="-1" autocomplete="off"></label></div>
+  <p><label>Имя <input name="name" maxlength="100" autocomplete="name"></label></p>
+  <p><label>Телефон <input name="phone" type="tel" maxlength="25" autocomplete="tel" required></label></p>
+  <p><label><input type="checkbox" name="consent" value="1" required> Даю <a href="/soglasie/" target="_blank">согласие на обработку персональных данных</a></label></p>
+  <p><button>Отправить</button> <span role="status"></span></p>
+</form>
+<script>
+document.querySelectorAll('form[data-zayavka]').forEach(function (f) {
+  function fresh() {
+    var b = new Uint8Array(16); crypto.getRandomValues(b);
+    f.elements.id.value = Array.from(b, function (x) { return x.toString(16).padStart(2, '0'); }).join('');
+    f.elements.page.value = location.origin + location.pathname;
+  }
+  fresh();
+  f.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var s = f.querySelector('[role=status]'), b = f.querySelector('button'), call = f.dataset.fallback || ''; b.disabled = true;
+    var text = { 409: 'Страница устарела. Обновите её и отправьте заявку ещё раз.', 413: 'Слишком длинное сообщение.', 422: 'Проверьте поля формы.', 429: 'Заявка не принята: слишком много заявок подряд. ' + call };
+    try {
+      var r = await fetch(f.action, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(f))) });
+      var d = r.ok ? await r.json() : {};
+      if (d.ok) { s.textContent = 'Заявка ' + d.key + ' принята.'; f.reset(); fresh(); }
+      else s.textContent = text[r.status] || 'Заявка не принята: ошибка на сайте. ' + call;
+    } catch (x) { s.textContent = 'Нет связи. Нажмите ещё раз: повтор не создаст вторую заявку. ' + call; }
+    b.disabled = false;
+  });
+});
+</script>
