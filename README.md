@@ -10,7 +10,7 @@ and it is not legal advice. You still need a lawful basis, a privacy policy, a s
 to Roskomnadzor where required, and hosting and backups located in Russia. The program cannot verify where your
 server is.
 
-**Status:** 0.2.0, new. It has not run on a live site yet. The test suite passes on PHP 8.0 to 8.5. See "Security checks" for
+**Status:** 0.2.0, new. It runs on one live site since 25 November 2026; long operation has not been tested yet. The test suite passes on PHP 8.0 to 8.5. See "Security checks" for
 what was and was not checked.
 
 ## What goes where
@@ -145,5 +145,8 @@ independent penetration test and not a certificate; passing checks are not a pro
 - OWASP ASVS 5.0 levels 1-2, 253 requirements: 89 met, 30 partly, 15 not met, 9 depend on your server, 110 not applicable.
   Not met, for example: no second factor, no breached-password check.
 
-Not checked: LiteSpeed, hosting panels, real Telegram, SMTP, CRM, Metrica and Excel, long operation on a live site.
+One live site (PHP 8.5 under Apache): acceptance, repeat, refusal without consent and from a foreign site, the form without
+JavaScript, `mail()` with the number only, a webhook to our own PMS, cron and login.
+
+Not checked: LiteSpeed, other hosting panels, real Telegram, SMTP, Bitrix24, amoCRM, Metrica and Excel, long operation.
 The audit of 0.1.0 found problems of availability and hardening; they are fixed in 0.2.0.
