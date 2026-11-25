@@ -10,7 +10,7 @@ function zk_reply(int $code, array $d, bool $json, string $thanks = '/'): void {
     if ($json) { http_response_code($code); header('Content-Type: application/json; charset=utf-8'); echo json_encode($d); return; }
     if ($code === 200) { header('Location: ' . $thanks, true, 303); return; }
     http_response_code($code); header('Content-Type: text/plain; charset=utf-8');
-    $t = [409 => 'Страница устарела. Вернитесь, обновите её и отправьте заявку ещё раз.', 413 => 'Слишком длинное сообщение.', 422 => 'Вернитесь и проверьте поля формы.', 429 => 'Заявка не принята: слишком много заявок подряд. Попробуйте позже.'];
+    $t = [409 => 'Страница устарела. Вернитесь, обновите её и отправьте заявку ещё раз.', 413 => 'Слишком длинное сообщение.', 422 => 'Вернитесь и проверьте поля формы.', 429 => 'Заявка не принята: слишком много заявок подряд. Попробуйте позже.', 503 => 'Заявка не принята: на сайте закончилось место. Свяжитесь с нами другим способом.'];
     echo $code === 422 && ($d['error'] ?? '') === 'consent' ? 'Вернитесь и отметьте согласие на обработку персональных данных.' : ($t[$code] ?? 'Заявка не принята: ошибка на сайте. Свяжитесь с нами другим способом.');
 }
 
@@ -46,7 +46,7 @@ try {
     // the lead is already stored: nothing below may turn the answer into an error
     try {
         if ($code !== 200 && $code !== 422) zk_count("refused: $code");
-        if (!$c['trust_proxy'] && (isset($_SERVER['HTTP_X_REAL_IP']) || isset($_SERVER['HTTP_X_FORWARDED_FOR']))) zk_state('proxy seen', date('c'));
+        if ($code === 200) { zk_count('accepted'); if (!$c['trust_proxy'] && (isset($_SERVER['HTTP_X_REAL_IP']) || isset($_SERVER['HTTP_X_FORWARDED_FOR']))) zk_count('via proxy'); }
         zk_purge();
     } catch (Throwable $e) { error_log('zayavka purge: ' . get_class($e) . ' ' . $e->getMessage()); }
     try {

@@ -1,8 +1,18 @@
-<form method="post" action="/zayavka/submit.php" data-zayavka data-fallback="Позвоните нам: +7 000 000-00-00.">
+<!-- Goals: data-metrika is the number of your Yandex Metrica counter, data-goal is the goal id ("Целевое событие").
+     Both empty = nothing is sent. No form data ever goes to the goal. -->
+<form method="post" action="/zayavka/submit.php" data-zayavka data-metrika="" data-goal="lead" data-fallback="Позвоните нам: +7 000 000-00-00.">
   <input type="hidden" name="form" value="callback">
   <input type="hidden" name="consent_version" value="2026-12-01">
   <input type="hidden" name="id">
   <input type="hidden" name="page">
+  <!-- Ad tags and the Metrica client id in the lead. Add the same names to 'fields' in config.php, then uncomment.
+       The client id is linked to a person in the lead: name it in the consent text, use it only where the visitor allowed analytics.
+  <input type="hidden" name="utm_source" data-from-url>
+  <input type="hidden" name="utm_medium" data-from-url>
+  <input type="hidden" name="utm_campaign" data-from-url>
+  <input type="hidden" name="yclid" data-from-url>
+  <input type="hidden" name="ym_client_id" data-ym-client-id>
+  -->
   <div hidden style="display:none" aria-hidden="true"><label>Не заполняйте <input name="zk_hp" tabindex="-1" autocomplete="off"></label></div>
   <p><label>Имя <input name="name" maxlength="100" autocomplete="name"></label></p>
   <p><label>Телефон <input name="phone" type="tel" maxlength="25" autocomplete="tel" required></label></p>
@@ -17,6 +27,17 @@ document.querySelectorAll('form[data-zayavka]').forEach(function (f) {
     f.elements.page.value = location.origin + location.pathname;
   }
   fresh();
+  var counter = Number(f.dataset.metrika), metrika = function () { if (counter && typeof window.ym === 'function') window.ym.apply(null, [counter].concat([].slice.call(arguments))); };
+  var query = new URLSearchParams(location.search), limit = function (x) { return (x || '').slice(0, 100); };
+  f.querySelectorAll('[data-from-url]').forEach(function (x) { x.value = limit(query.get(x.name)); });
+  f.querySelectorAll('[data-ym-client-id]').forEach(function (x) { metrika('getClientID', function (id) { x.value = limit(String(id)); }); });
+  // Goals. Runs once per accepted lead. A goal must never break the form, so errors are swallowed.
+  function goal(key) {
+    try {
+      if (f.dataset.goal) metrika('reachGoal', f.dataset.goal);
+      document.dispatchEvent(new CustomEvent('zayavka:sent', { detail: { form: f.elements.form.value, key: key } }));
+    } catch (x) {}
+  }
   f.addEventListener('submit', async function (e) {
     e.preventDefault();
     var s = f.querySelector('[role=status]'), b = f.querySelector('button'), call = f.dataset.fallback || ''; b.disabled = true;
@@ -24,10 +45,17 @@ document.querySelectorAll('form[data-zayavka]').forEach(function (f) {
     try {
       var r = await fetch(f.action, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(f))) });
       var d = r.ok ? await r.json() : {};
-      if (d.ok) { s.textContent = 'Заявка ' + d.key + ' принята.'; f.reset(); fresh(); }
+      if (d.ok) { s.textContent = 'Заявка ' + d.key + ' принята.'; goal(d.key); f.reset(); fresh(); }
       else s.textContent = text[r.status] || 'Заявка не принята: ошибка на сайте. ' + call;
     } catch (x) { s.textContent = 'Нет связи. Нажмите ещё раз: повтор не создаст вторую заявку. ' + call; }
     b.disabled = false;
   });
 });
+
+/* Your own code after an accepted lead: another counter, a pop-up, a redirect. Uncomment and edit.
+   detail holds the form name and the lead number only. Analytics abroad is a cross-border transfer: decide on it separately.
+document.addEventListener('zayavka:sent', function (e) {
+  if (e.detail.form === 'brief') location.href = '/spasibo/';
+});
+*/
 </script>

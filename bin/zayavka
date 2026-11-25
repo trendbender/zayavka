@@ -7,7 +7,7 @@ $fail = function (string $t): void { fwrite(STDERR, $t . "\n"); exit(1); };
 [$cmd, $arg] = [$argv[1] ?? 'help', $argv[2] ?? ''];
 $num = function () use ($arg, $fail): int { if (!preg_match('/^(?:Z-)?([1-9][0-9]{0,17})$/', $arg, $m)) $fail('give one number, for example Z-12'); return (int) $m[1]; };
 
-if (in_array($cmd, ['deliver', 'list', 'show', 'delete', 'retry', 'audit', 'doctor'], true)) {
+if (in_array($cmd, ['deliver', 'list', 'show', 'delete', 'purge-over', 'purge-trap', 'retry', 'audit', 'doctor'], true)) {
     // files created by another user would make every web request fail
     if (function_exists('posix_geteuid')) {
         $me = posix_geteuid();
@@ -20,7 +20,8 @@ try {
     switch ($cmd) {
         case 'deliver':
             zk_db(); zk_state('last cron', (string) time());
-            $n = zk_purge(); $r = zk_deliver(50);
+            $n = zk_purge(); $r = zk_deliver(50); $o = zk_deliver(50, true); foreach ($r as $k => $x) $r[$k] += $o[$k];
+            if (zk_low_space()) zk_alert('space', 'zayavka: база заняла больше 80 % от max_db_mb. После 100 % форма перестанет принимать заявки. Удалите лишнее: bin/zayavka purge-over yes');
             if (zk_state('checkpoint') === 'pending' && zk_checkpoint()) zk_state('checkpoint', 'done');
             if ($r['sent'] || $r['failed'] || $n) echo "sent {$r['sent']}, errors {$r['failed']}, expired $n\n";
             break;
@@ -30,13 +31,18 @@ try {
             $id = $num(); if (!zk_delete($id, 'cli', $argv[3] ?? 'manual')) $fail('not found');
             $clean = zk_checkpoint(); if (!$clean) zk_state('checkpoint', 'pending');
             echo 'deleted ', zk_key($id), $clean ? '' : ' (the write-ahead log is busy, cron will clear it)', "\n"; break;
+        case 'purge-over': case 'purge-trap':
+            $mark = $cmd === 'purge-over' ? 2 : 1;
+            if ($arg !== 'yes') $fail("deletes every " . ($mark === 2 ? 'lead above the daily cap' : 'lead with a filled trap') . ' that was not confirmed: ' . zk_q('SELECT COUNT(*) FROM leads WHERE suspect=?', [$mark])->fetchColumn() . ". To do it: bin/zayavka $cmd yes");
+            echo 'deleted: ', zk_purge_over('cli', $mark), "\n"; break;
         case 'retry': echo 'queued again: ', zk_q("UPDATE deliveries SET status='pending', tries=0, next_at=0 WHERE status='failed'")->rowCount(), "\n"; break;
         case 'audit': echo zk_csv(['time', 'actor', 'action', 'lead', 'info']); foreach (zk_q('SELECT * FROM audit ORDER BY ts') as $a) echo zk_csv([date('c', (int) $a['ts']), $a['actor'], $a['action'], $a['lead'], $a['info']]); break;
-        case 'password': $p = preg_replace('/^\xEF\xBB\xBF/', '', rtrim((string) fgets(STDIN), "\r\n")); if (mb_strlen($p) < 12) $fail('12+ characters, from stdin'); echo password_hash($p, PASSWORD_DEFAULT), "\n"; break;
+        case 'password': $tty = function_exists('posix_isatty') && @posix_isatty(STDIN); if ($tty) { fwrite(STDERR, 'Password: '); shell_exec('stty -echo 2>/dev/null'); register_shutdown_function(fn() => shell_exec('stty echo 2>/dev/null')); }
+            $p = preg_replace('/^\xEF\xBB\xBF/', '', rtrim((string) fgets(STDIN), "\r\n")); if (mb_strlen($p) < 12) $fail('12+ characters, from stdin'); if (strlen($p) > 72) $fail('at most 72 bytes (36 Cyrillic letters): bcrypt ignores the rest'); echo password_hash($p, PASSWORD_DEFAULT), "\n"; break;
         case 'doctor':
             $bad = 0; $say = function (bool $ok, string $t) use (&$bad) { echo $ok ? 'OK    ' : 'FAIL  ', $t, "\n"; if (!$ok) $bad++; };
             $say(PHP_VERSION_ID >= 80000, 'PHP ' . PHP_VERSION . ', zayavka ' . ZK_VERSION);
-            foreach (['pdo_sqlite', 'mbstring', 'openssl', 'session'] as $x) $say(extension_loaded($x), "extension $x");
+            foreach (['pdo_sqlite', 'mbstring', 'openssl'] as $x) $say(extension_loaded($x), "extension $x");
             $c = zk_cfg(); zk_db(); $st = $c['storage']; $cf = zk_dir() . '/config.php';
             $say(version_compare((string) zk_q('SELECT sqlite_version()')->fetchColumn(), '3.24', '>='), 'SQLite 3.24+');
             $say((fileperms(zk_db_file()) & 0077) === 0, 'database is readable by its owner only'); $say((fileperms($st) & 0077) === 0, 'storage is closed to other users (chmod 700)');
@@ -44,7 +50,6 @@ try {
             $say((int) $c['retention_days'] > 0, 'retention ' . $c['retention_days'] . ' days');
             foreach ($c['allowed_origins'] as $o) $say((str_starts_with($o, 'https://') || str_starts_with($o, 'http://127.0.0.1')) && !preg_match('/(^|[.\/])example\.(ru|com)$/', $o), "origin $o (pages opened with another host, with or without www, will get 403)");
             foreach ($c['consents'] as $id => $t) $say(!str_contains((string) $t, 'example.ru'), "consent edition '$id', sha256 " . substr(hash('sha256', (string) $t), 0, 12));
-            $say(!ini_get('session.auto_start'), 'session.auto_start is off');
             $targets = [(string) realpath(zk_dir()), (string) realpath($st)];
             foreach ($c['web_roots'] as $r) {
                 $links = [];
@@ -52,10 +57,16 @@ try {
                 $say(!$links, "no link from the web root $r to the program" . ($links ? ': ' . implode(', ', $links) : ''));
             }
             foreach ($c['channels'] as $n => $ch) { [$m, $why] = zk_policy($ch); $say(!(($ch['data'] ?? 'notice') === 'full' && $m !== 'full'), "channel $n: sends " . ($m === 'full' ? 'PERSONAL DATA' : 'number only') . " ($why)"); }
+            foreach ($c['channels'] as $n => $ch) {
+                if (isset($ch['map'])) { $u = zk_map_unknown($ch['map']); $say(!$u, "channel $n: map" . ($u ? ', unknown placeholders: ' . implode(', ', $u) : '')); }
+                try { zk_headers($ch); $h = true; } catch (Throwable $e) { $h = false; }
+                if (isset($ch['headers'])) $say($h, "channel $n: headers");
+                if (($ch['type'] ?? '') === 'php') $say(is_string($ch['file'] ?? null) && is_file($ch['file']) && function_exists('proc_open'), "channel $n: own code file and proc_open");
+            }
             $say((int) zk_q("SELECT COUNT(*) FROM deliveries WHERE status='failed'")->fetchColumn() === 0, 'no failed deliveries');
             foreach (zk_warnings() as $w) echo 'NOTE  ', $w, "\n";
             echo "NOTE  Run by uid ", function_exists('posix_geteuid') ? posix_geteuid() : '?', ". PHP of the website must run as the same user: open admin.php, it must show a login form.\n";
             echo "NOTE  Where the server and its backups are located cannot be checked from here: see your hosting contract.\n"; exit($bad ? 1 : 0);
-        default: echo "zayavka deliver | list | show N | delete N [reason] | retry | audit | password | doctor\n";
+        default: echo "zayavka deliver | list | show N | delete N [reason] | purge-over | purge-trap | retry | audit | password | doctor\n";
     }
 } catch (Throwable $e) { $fail('zayavka: ' . $e->getMessage()); }

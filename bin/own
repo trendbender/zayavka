@@ -1,0 +1,13 @@
+<?php
+/* Runs the own code of one channel in a process of its own. Started by zk_own(), not by hand. */
+declare(strict_types=1);
+if (PHP_SAPI !== 'cli') exit(1);
+if (function_exists('pcntl_alarm')) pcntl_alarm(max(1, (int) ($argv[2] ?? 15)) + 5);    // even if the parent is killed
+$zk_out = fopen('php://fd/3', 'w');
+try {
+    $zk_values = json_decode((string) stream_get_contents(STDIN), true, 8, JSON_THROW_ON_ERROR);
+    $zk_call = require $argv[1];
+    if (!$zk_call instanceof Closure) throw new RuntimeException('the file must return a function');
+    $zk_call($zk_values);
+    fwrite($zk_out, 'done');
+} catch (Throwable $e) { fwrite($zk_out, 'fail'); }
